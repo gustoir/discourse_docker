@@ -22,6 +22,7 @@ params:
 
 run:
   - exec: /usr/local/bin/ruby -e 'if ENV["DISCOURSE_SMTP_ADDRESS"] == "smtp.example.com"; puts "Aborting! Mail is not configured!"; exit 1; end'
+  - exec: /usr/local/bin/ruby -e 'if ENV["DISCOURSE_HOSTNAME"] == "discourse.example.com"; puts "Aborting! Domain is not configured!"; exit 1; end'
   - file:
      path: /etc/runit/1.d/copy-env
      chmod: "+x"
@@ -38,6 +39,7 @@ run:
      chmod: "+x"
      contents: |
         #!/bin/bash
+        mkdir -p /var/log/nginx
         chgrp -R www-data /var/log/nginx
         chgrp www-data /var/log/nginx
 
@@ -59,7 +61,6 @@ run:
      contents: |
         #!/bin/sh
         exec 2>&1
-        mkdir -p /var/log/nginx
         exec /usr/sbin/nginx
 
   - file:
@@ -253,3 +254,10 @@ run:
           mkdir -p /shared/backups
           chown -R discourse:www-data /shared/backups
         fi
+
+  # change login directory to Discourse home
+  - file:
+     path: /root/.bash_profile
+     chmod: 644
+     contents: |
+        cd $home

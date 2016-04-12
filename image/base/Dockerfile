@@ -2,11 +2,13 @@
 # When new LTS ships we can upgrade
 
 # NAME:     discourse_base
-# VERSION:  1.0.12
+# VERSION:  1.0.17
 
 FROM ubuntu:14.04
 
 MAINTAINER Sam Saffron "https://twitter.com/samsaffron"
+
+RUN echo "1.0.13" > /VERSION
 
 RUN echo "debconf debconf/frontend select Teletype" | debconf-set-selections &&\
     echo "deb http://archive.ubuntu.com/ubuntu $(lsb_release -sc) main restricted universe" > /etc/apt/sources.list &&\
@@ -22,12 +24,12 @@ RUN echo "debconf debconf/frontend select Teletype" | debconf-set-selections &&\
     apt-get install -y curl && curl http://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc | apt-key add - &&\
     echo "deb http://apt.postgresql.org/pub/repos/apt/ trusty-pgdg main" | \
         tee /etc/apt/sources.list.d/postgres.list &&\
-    curl -sL https://deb.nodesource.com/setup | sudo bash - &&\
+    curl --silent --location https://deb.nodesource.com/setup_4.x | sudo bash - &&\
     apt-get -y update &&\
     apt-get -y install build-essential git curl wget \
                        libxslt-dev libcurl4-openssl-dev \
                        libssl-dev libyaml-dev libtool \
-                       libxml2-dev gawk \
+                       libxml2-dev gawk parallel \
                        postgresql-9.3 postgresql-client-9.3 \
                        postgresql-contrib-9.3 libpq-dev libreadline-dev \
                        nginx language-pack-en sudo cron anacron \
@@ -43,11 +45,6 @@ RUN echo "debconf debconf/frontend select Teletype" | debconf-set-selections &&\
     apt-get clean &&\
     rm -f /etc/apt/apt.conf.d/40proxy &&\
     locale-gen en_US &&\
-    wget http://static.jonof.id.au/dl/kenutils/pngout-20150319-linux.tar.gz &&\
-      tar -xf pngout-20150319-linux.tar.gz &&\
-      rm pngout-20150319-linux.tar.gz &&\
-      cp pngout-20150319-linux/x86_64/pngout /bin/pngout &&\
-      rm -rf pngout-20150319-linux &&\
     apt-get install -y nodejs &&\
     npm install uglify-js -g &&\
     npm install svgo -g &&\
@@ -84,7 +81,7 @@ RUN add-apt-repository ppa:ubuntu-toolchain-r/test &&\
     echo 'gem: --no-document' >> /usr/local/etc/gemrc &&\
     mkdir /src && cd /src && git clone https://github.com/sstephenson/ruby-build.git &&\
     cd /src/ruby-build && ./install.sh &&\
-    cd / && rm -rf /src/ruby-build && ruby-build 2.0.0-p645 /usr/local &&\
+    cd / && rm -rf /src/ruby-build && ruby-build 2.0.0-p647 /usr/local &&\
     gem update --system &&\
     gem install bundler &&\
     rm -rf /usr/local/share/ri/2.0.0/system &&\
@@ -102,6 +99,3 @@ ADD boot /sbin/boot
 
 ADD cron /etc/service/cron/run
 ADD rsyslog /etc/service/rsyslog/run
-
-# this is temporary, remove in 2015
-RUN cp /sbin/boot /sbin/runit

@@ -2,13 +2,14 @@
 #
 require 'pty'
 
-$version = "1.0.12"
+$version = "1.0.17"
 
-$docker_squash = "https://github.com/jwilder/docker-squash/releases/download/v0.0.11/docker-squash-linux-amd64-v0.0.11.tar.gz"
+$docker_squash = "https://github.com/jwilder/docker-squash/releases/download/v0.2.0/docker-squash-linux-amd64-v0.2.0.tar.gz"
 
-$base_image = "samsaffron/discourse_base:#{$version}"
-$image = "samsaffron/discourse:#{$version}"
-$fast_switch= "samsaffron/discourse_fast_switch:#{$version}"
+$base_image = "discourse/base:#{$version}"
+$image = "discourse/discourse:#{$version}"
+$fast_switch= "discourse/discourse_fast_switch:#{$version}"
+$test = "discourse/discourse_test:#{$version}"
 
 if ENV["USER"] != "root"
   STDERR.puts "Build script must be ran as root due to docker-squash"
@@ -50,3 +51,4 @@ end
 build("base",$base_image,true)
 build("discourse",$image,false)
 build("discourse_fast_switch",$fast_switch,false)
+build("discourse_test",$test,false)
