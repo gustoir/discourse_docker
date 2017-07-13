@@ -1,4 +1,7 @@
-FROM discourse/discourse:1.3.5
+# NAME:     discourse/discourse_test
+# VERSION:  release
+ARG tag=build
+FROM discourse/base:$tag
 
 MAINTAINER Sam Saffron "https://twitter.com/samsaffron"
 

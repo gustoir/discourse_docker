@@ -6,6 +6,10 @@ env:
   # this gives us very good cache coverage, 96 -> 99
   # in practice it is 1-2% perf improvement
   RUBY_GLOBAL_METHOD_CACHE_SIZE: 131072
+  # stop heap doubling in size so aggressively, this conserves memory
+  RUBY_GC_HEAP_GROWTH_MAX_SLOTS: 40000
+  RUBY_GC_HEAP_INIT_SLOTS: 400000
+  RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR: 1.5
 
   DISCOURSE_DB_SOCKET: /var/run/postgresql
   DISCOURSE_DB_HOST:
@@ -39,6 +43,15 @@ run:
   - exec: /usr/local/bin/ruby -e 'if ENV["DISCOURSE_SMTP_ADDRESS"] == "smtp.example.com"; puts "Aborting! Mail is not configured!"; exit 1; end'
   - exec: /usr/local/bin/ruby -e 'if ENV["DISCOURSE_HOSTNAME"] == "discourse.example.com"; puts "Aborting! Domain is not configured!"; exit 1; end'
   - exec: chown -R discourse /home/discourse
+  # TODO: move to base image (anacron can not be fired up using rc.d)
+  - exec: rm -f /etc/cron.d/anacron
+  - file:
+     path: /etc/cron.d/anacron
+     contents: |
+        SHELL=/bin/sh
+        PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+        30 7    * * *   root	/usr/sbin/anacron -s >/dev/null
   - file:
      path: /etc/runit/1.d/copy-env
      chmod: "+x"
@@ -49,22 +62,13 @@ run:
 
         # find DISCOURSE_ env vars, strip the leader, lowercase the key
         /usr/local/bin/ruby -e 'ENV.each{|k,v| puts "#{$1.downcase} = #{v}" if k =~ /^DISCOURSE_(.*)/}' > $conf
-
+        
   - file:
      path: /etc/runit/1.d/enable-brotli
      chmod: "+x"
      contents: |
         #!/bin/bash
         [ ! -z "$COMPRESS_BROTLI" ] && sed -i "s/. brotli/  brotli/" /etc/nginx/conf.d/discourse.conf || sed -i "s/. brotli/# brotli/" /etc/nginx/conf.d/discourse.conf
-
-  - file:
-     path: /etc/runit/1.d/ensure-web-nginx-read
-     chmod: "+x"
-     contents: |
-        #!/bin/bash
-        mkdir -p /var/log/nginx
-        chgrp -R www-data /var/log/nginx
-        chgrp www-data /var/log/nginx
 
   - file:
      path: /etc/service/unicorn/run
@@ -76,7 +80,7 @@ run:
         # postgres
         cd $home
         chown -R discourse:www-data /shared/log/rails
-        LD_PRELOAD=/usr/lib/libjemalloc.so.1 HOME=/home/discourse USER=discourse exec chpst -u discourse:www-data -U discourse:www-data bundle exec config/unicorn_launcher -E production -c config/unicorn.conf.rb
+        LD_PRELOAD=$RUBY_ALLOCATOR HOME=/home/discourse USER=discourse exec chpst -u discourse:www-data -U discourse:www-data bundle exec config/unicorn_launcher -E production -c config/unicorn.conf.rb
 
   - file:
      path: /etc/service/nginx/run
