@@ -23,7 +23,7 @@ RUN apt-get -y upgrade
 RUN curl http://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc | apt-key add -
 RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -sc)-pgdg main" | \
         tee /etc/apt/sources.list.d/postgres.list
-RUN curl --silent --location https://deb.nodesource.com/setup_6.x | sudo bash -
+RUN curl --silent --location https://deb.nodesource.com/setup_8.x | sudo bash -
 RUN apt-get -y update
 RUN apt-get -y install build-essential git wget \
                        libxslt-dev libcurl4-openssl-dev \
@@ -72,13 +72,16 @@ RUN mkdir /lockless && cd /lockless && curl -O https://locklessinc.com/downloads
       tar zxf lockless_allocator_linux.tgz && mv lockless_allocator_linux/64bit/libllalloc.so.1.4 /usr/lib &&\
       cd / && rm -rf /lockless
 
+ADD rb_thread_fd_close.patch /tmp/rb_thread_fd_close.patch
 RUN echo 'gem: --no-document' >> /usr/local/etc/gemrc &&\
     mkdir /src && cd /src && git clone https://github.com/sstephenson/ruby-build.git &&\
     cd /src/ruby-build && ./install.sh &&\
-    cd / && rm -rf /src/ruby-build && ruby-build 2.4.1 /usr/local
+    cd / && rm -rf /src/ruby-build && (ruby-build 2.4.2 /usr/local --patch << /tmp/rb_thread_fd_close.patch)
+
+RUN gem update --system
 
 RUN gem install bundler &&\
-    rm -rf /usr/local/share/ri/2.4.1/system &&\
+    rm -rf /usr/local/share/ri/2.4.2/system &&\
     cd / && git clone https://github.com/SamSaffron/pups.git
 
 ADD install-imagemagick /tmp/install-imagemagick

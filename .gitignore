@@ -15,3 +15,4 @@ image/discourse_dev/postgres.template.yml
 image/discourse_dev/redis.template.yml
 .gc-state/*
 .idea
+.vagrant/
