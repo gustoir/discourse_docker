@@ -10,50 +10,55 @@ check_root() {
   fi
 }
 
+##
+## Check whether a connection to HOSTNAME ($1) on PORT ($2) is possible
+##
+connect_to_port () {
+  HOST="$1"
+  PORT="$2"
+  VERIFY=`date +%s | sha256sum | base64 | head -c 20`
+  echo -e "HTTP/1.1 200 OK\n\n $VERIFY" | nc -w 4 -l -p $PORT >/dev/null 2>&1 &
+  if curl --proto =http -s $HOST:$PORT --connect-timeout 3 | grep $VERIFY >/dev/null 2>&1
+  then
+      return 0
+  else
+    curl --proto =http -s localhost:$PORT >/dev/null 2>&1
+    return 1
+  fi
+}
 
-##
-## Does the current IP match the domain name?
-##
 check_IP_match () {
+  HOST="$1"
   echo
   echo Checking your domain name . . .
-  sleep 1
-  local IFACE=none
-  local IFCONFIG=`which ifconfig`
-  /sbin/route |grep default > /tmp/route$PPID
-
-  if grep default /tmp/route$PPID > /dev/null
+  if connect_to_port $HOST 443
   then
-      local IFACE=`cut -c 73-100 /tmp/route$PPID |head -1`
-  else
-    echo WARNING: Cannot check your IP number.
-  fi
-  local IP=`$IFCONFIG $IFACE|grep  "inet addr:" |cut -d":" -f 2|cut -d" " -f1|head -1`
-  local RESOLVED_IP=`dig +short $1`
-
-  IP_LOOKS_GOOD=0
-  if [[ ! -z $RESOLVED_IP ]]
-  then
-      if [ "$IP" == "$RESOLVED_IP" ]
-      then
-	  echo $1 resolves to $IP. Looks good!
-	  echo
-	  local IP_LOOKS_GOOD=1
-      fi
-  fi
-  if [ $IP_LOOKS_GOOD == 0 ]
-  then
-      echo "-----------------------------------------"
-      echo WARNING:: $1 does not appear to resolve to $IP.
-      echo ""
-      echo LET\'S ENCRYPT cannot work if their servers cannot access your host by name.
-      echo Unless you think you know why this naive check failed, DO NOT USE Let\'s Encrypt.
-      echo "(A typical reason for failure is an AWS server with an elastic IP.)"
       echo
-      echo You should probably answer \"n\" at the next prompt and disable Let\'s Encrypt.
-      echo "-----------------------------------------"
+      echo "Connection to $HOST succeeded."
+  else
+    echo WARNING:: This server does not appear to be accessible at $HOST:443.
+    echo
+    if connect_to_port $HOST 80
+    then
+	echo A connection to port 80 succeeds, however.
+	echo This suggests that your DNS settings are correct,
+	echo but something is keeping traffic to port 443 from getting to your server.
+	echo Check your networking configuration to see that connections to port 443 are allowed.
+    else
+      echo "A connection to http://$HOST (port 80) also fails."
+      echo
+      echo This suggests that $HOST resolves to the wrong IP address
+      echo or that traffic is not being routed to your server.
+    fi
+    echo
+    echo Google: \"open ports YOUR CLOUD SERVICE\" for information for resolving this problem.
+    echo
+    echo You should probably answer \"n\" at the next prompt and disable Let\'s Encrypt.
+    echo
+    echo This test might not work for all situations,
+    echo so if you can access Discourse at http://$HOST, you might try anyway.
+    sleep 3
   fi
-  sleep 1
 }
 
 ##
@@ -117,6 +122,7 @@ check_disk_and_memory() {
 
   if [ "$avail_mem" -le 2 ]; then
     total_swap=`free -g --si | awk ' /Swap:/  {print $2} '`
+
     if [ "$total_swap" -lt 2 ]; then
       echo "WARNING: Discourse requires at least 2GB of swap when running with 2GB of RAM"
       echo "or less. This system does not appear to have sufficient swap space."
@@ -124,7 +130,8 @@ check_disk_and_memory() {
       echo "Without sufficient swap space, your site may not work properly, and future"
       echo "upgrades of Discourse may not complete successfully."
       echo
-      read -p "ENTER to create a 2GB swapfile now, or Ctrl+C to exit"
+      echo "Ctrl+C to exit or wait 5 seconds to have a 2GB swapfile created."
+      sleep 5
 
       ##
       ## derived from https://meta.discourse.org/t/13880
@@ -139,7 +146,7 @@ check_disk_and_memory() {
 
       total_swap=`free -g --si | awk ' /Swap:/ {print $2} '`
       if [ "$total_swap" -lt 2 ]; then
-        echo "Failed to create swap, sorry!"
+        echo "Failed to create swap: are you root? Are you running on real hardware, or a fully virtualized server?"
         exit 1
       fi
 
@@ -198,7 +205,7 @@ scale_ram_and_cpu() {
   fi
   db_shared_buffers=$(( db_shared_buffers < 4096 ? db_shared_buffers : 4096 ))
 
-  sed -i -e "s/^  #\?db_shared_buffers:.*/  db_shared_buffers: \"${db_shared_buffers}MB\"/w $changelog" $config_file
+  sed -i -e "s/^  #\?db_shared_buffers:.*/  db_shared_buffers: \"${db_shared_buffers}MB\"/w $changelog" $data_file
   if [ -s $changelog ]
   then
     echo "setting db_shared_buffers = ${db_shared_buffers}MB"
@@ -214,13 +221,14 @@ scale_ram_and_cpu() {
   fi
   unicorn_workers=$(( unicorn_workers < 8 ? unicorn_workers : 8 ))
 
-  sed -i -e "s/^  #\?UNICORN_WORKERS:.*/  UNICORN_WORKERS: ${unicorn_workers}/w $changelog" $config_file
+  sed -i -e "s/^  #\?UNICORN_WORKERS:.*/  UNICORN_WORKERS: ${unicorn_workers}/w $changelog" $web_file
   if [ -s $changelog ]
   then
       echo "setting UNICORN_WORKERS = ${unicorn_workers}"
       rm $changelog
   fi
 
+  echo $data_file memory parameters updated.
 }
 
 
@@ -244,6 +252,9 @@ check_port() {
   if [ -n "$valid" ]; then
     echo "Port ${1} appears to already be in use."
     echo
+    echo "This will show you what command is using port ${1}"
+    lsof -i tcp:${1} -s tcp:listen
+    echo
     echo "If you are trying to run Discourse simultaneously with another web"
     echo "server like Apache or nginx, you will need to bind to a different port"
     echo
@@ -262,8 +273,7 @@ check_port() {
 ## read a variable from the config file
 ##
 read_config() {
-
-  config_line=`egrep "^  #?$1:" $config_file`
+  config_line=`egrep "^  #?$1:" $web_file`
   read_config_result=`echo $config_line | awk '{print $2}'`
   read_config_result=`echo $read_config_result | sed "s/^\([\"']\)\(.*\)\1\$/\2/g"`
 }
@@ -372,9 +382,9 @@ ask_user_for_config() {
     if [ ! -z $smtp_user_name ]
     then
       read -p "SMTP user name? [$smtp_user_name]: " new_value
-      if [ ! -z $new_value ]
+      if [ ! -z "$new_value" ]
       then
-          smtp_user_name=$new_value
+          smtp_user_name="$new_value"
       fi
     fi
 
@@ -422,7 +432,7 @@ ask_user_for_config() {
     read -p "ENTER to continue, 'n' to try again, Ctrl+C to exit: " config_ok
   done
 
-  sed -i -e "s/^  DISCOURSE_HOSTNAME:.*/  DISCOURSE_HOSTNAME: $hostname/w $changelog" $config_file
+  sed -i -e "s/^  DISCOURSE_HOSTNAME:.*/  DISCOURSE_HOSTNAME: $hostname/w $changelog" $web_file
   if [ -s $changelog ]
   then
     rm $changelog
@@ -431,7 +441,7 @@ ask_user_for_config() {
     update_ok="n"
   fi
 
-  sed -i -e "s/^  DISCOURSE_DEVELOPER_EMAILS:.*/  DISCOURSE_DEVELOPER_EMAILS: \'$developer_emails\'/w $changelog" $config_file
+  sed -i -e "s/^  DISCOURSE_DEVELOPER_EMAILS:.*/  DISCOURSE_DEVELOPER_EMAILS: \'$developer_emails\'/w $changelog" $web_file
   if [ -s $changelog ]
   then
     rm $changelog
@@ -440,7 +450,7 @@ ask_user_for_config() {
     update_ok="n"
   fi
 
-  sed -i -e "s/^  DISCOURSE_SMTP_ADDRESS:.*/  DISCOURSE_SMTP_ADDRESS: $smtp_address/w $changelog" $config_file
+  sed -i -e "s/^  DISCOURSE_SMTP_ADDRESS:.*/  DISCOURSE_SMTP_ADDRESS: $smtp_address/w $changelog" $web_file
   if [ -s $changelog ]
   then
     rm $changelog
@@ -449,7 +459,7 @@ ask_user_for_config() {
     update_ok="n"
   fi
 
-  sed -i -e "s/^  #\?DISCOURSE_SMTP_PORT:.*/  DISCOURSE_SMTP_PORT: $smtp_port/w $changelog" $config_file
+  sed -i -e "s/^  #\?DISCOURSE_SMTP_PORT:.*/  DISCOURSE_SMTP_PORT: $smtp_port/w $changelog" $web_file
   if [ -s $changelog ]
   then
     rm $changelog
@@ -458,7 +468,7 @@ ask_user_for_config() {
     update_ok="n"
   fi
 
-  sed -i -e "s/^  #\?DISCOURSE_SMTP_USER_NAME:.*/  DISCOURSE_SMTP_USER_NAME: $smtp_user_name/w $changelog" $config_file
+  sed -i -e "s/^  #\?DISCOURSE_SMTP_USER_NAME:.*/  DISCOURSE_SMTP_USER_NAME: $smtp_user_name/w $changelog" $web_file
   if [ -s $changelog ]
   then
     rm $changelog
@@ -467,7 +477,7 @@ ask_user_for_config() {
     update_ok="n"
   fi
 
-  sed -i -e "s/^  #\?DISCOURSE_SMTP_PASSWORD:.*/  DISCOURSE_SMTP_PASSWORD: \"${smtp_password/\//\\/}\"/w $changelog" $config_file
+  sed -i -e "s/^  #\?DISCOURSE_SMTP_PASSWORD:.*/  DISCOURSE_SMTP_PASSWORD: \"${smtp_password/\//\\/}\"/w $changelog" $web_file
   if [ -s $changelog ]
   then
       rm $changelog
@@ -480,7 +490,7 @@ ask_user_for_config() {
   then
       local src='^  #\?- "templates\/web.ssl.template.yml"'
       local dst='  #\- "templates\/web.ssl.template.yml"'
-      sed -i -e "s/$src/$dst/w $changelog" $config_file
+      sed -i -e "s/$src/$dst/w $changelog" $web_file
       if [ ! -s $changelog ]
       then
         update_ok="n"
@@ -489,7 +499,7 @@ ask_user_for_config() {
       local src='^  #\?- "templates\/web.letsencrypt.ssl.template.yml"'
       local dst='  #- "templates\/web.letsencrypt.ssl.template.yml"'
 
-      sed -i -e "s/$src/$dst/w $changelog" $config_file
+      sed -i -e "s/$src/$dst/w $changelog" $web_file
       if [ ! -s $changelog ]
       then
         update_ok="n"
@@ -497,7 +507,7 @@ ask_user_for_config() {
       fi
   else # enable let's encrypt
     echo "Let's Encrypt will be enabled for $letsencrypt_account_email"
-      sed -i -e "s/^  #\?LETSENCRYPT_ACCOUNT_EMAIL:.*/  LETSENCRYPT_ACCOUNT_EMAIL: $letsencrypt_account_email/w $changelog" $config_file
+      sed -i -e "s/^  #\?LETSENCRYPT_ACCOUNT_EMAIL:.*/  LETSENCRYPT_ACCOUNT_EMAIL: $letsencrypt_account_email/w $changelog" $web_file
       if [ -s $changelog ]
       then
         rm $changelog
@@ -507,7 +517,7 @@ ask_user_for_config() {
       fi
       local src='^  #\?- "templates\/web.ssl.template.yml"'
       local dst='  \- "templates\/web.ssl.template.yml"'
-      sed -i -e "s/$src/$dst/w $changelog" $config_file
+      sed -i -e "s/$src/$dst/w $changelog" $web_file
       if [ -s $changelog ]
       then
 	  echo "web.ssl.template.yml enabled"
@@ -518,7 +528,7 @@ ask_user_for_config() {
       local src='^  #\?- "templates\/web.letsencrypt.ssl.template.yml"'
       local dst='  - "templates\/web.letsencrypt.ssl.template.yml"'
 
-      sed -i -e "s/$src/$dst/w $changelog" $config_file
+      sed -i -e "s/$src/$dst/w $changelog" $web_file
       if [ -s $changelog ]
       then
 	      echo "letsencrypt.ssl.template.yml enabled"
@@ -533,6 +543,7 @@ ask_user_for_config() {
     echo -e "\nConfiguration file at $config_file updated successfully!\n"
   else
     echo -e "\nUnfortunately, there was an error changing $config_file\n"
+    echo -d "This may happen if you have made unexpected changes."
     exit 1
   fi
 }
@@ -547,7 +558,7 @@ validate_config() {
   for x in DISCOURSE_SMTP_ADDRESS DISCOURSE_SMTP_USER_NAME DISCOURSE_SMTP_PASSWORD \
            DISCOURSE_DEVELOPER_EMAILS DISCOURSE_HOSTNAME
   do
-    config_line=`grep "^  $x:" $config_file`
+    config_line=`grep "^  $x:" $web_file`
     local result=$?
     local default="example.com"
 
@@ -571,8 +582,8 @@ validate_config() {
   done
 
   if [ "$valid_config" != "y" ]; then
-    echo -e "\nSorry, these $config_file settings aren't valid -- can't continue!"
-    echo "If you have unusual requirements, edit $config_file and then: "
+    echo -e "\nSorry, these $web_file settings aren't valid -- can't continue!"
+    echo "If you have unusual requirements, edit $web_file and then: "
     echo "./launcher bootstrap $app_name"
     exit 1
   fi
@@ -582,10 +593,24 @@ validate_config() {
 ##
 ## template file names
 ##
-app_name=app
-template_path=samples/standalone.yml
-config_file=containers/$app_name.yml
-changelog=/tmp/changelog
+
+if [ "$1" == "2container" ]
+then
+    app_name=web_only
+    data_name=data
+    web_template=samples/web_only.yml
+    data_template=samples/data.yml
+    web_file=containers/$app_name.yml
+    data_file=containers/$data_name.yml
+else
+  app_name=app
+  data_name=app
+  web_template=samples/standalone.yml
+  data_template=""
+  web_file=containers/$app_name.yml
+  data_file=containers/$app_name.yml
+fi
+    changelog=/tmp/changelog
 
 ##
 ## Check requirements before creating a copy of a config file we won't edit
@@ -593,24 +618,50 @@ changelog=/tmp/changelog
 check_root
 check_and_install_docker
 check_disk_and_memory
-check_ports
 
-##
-## make a copy of the simple standalone config file
-##
-if [ -a $config_file ]
+if [ -a "$web_file" ]
 then
-  echo "The configuration file $config_file already exists!"
+  echo "The configuration file $web_file already exists!"
   echo
   echo ". . . reconfiguring . . ."
+  echo
   echo
   DATE=`date +"%Y-%m-%d-%H%M%S"`
   BACKUP=$app_name.yml.$DATE.bak
   echo Saving old file as $BACKUP
   cp $config_file containers/$BACKUP
+  echo "Stopping existing container in 5 seconds or Control-C to cancel."
+  sleep 5
+  ./launcher stop app
   echo
 else
-  cp $template_path $config_file
+  check_ports
+  cp -v $web_template $web_file
+  if [ "$data_name" == "data" ]
+  then
+      echo "--------------------------------------------------"
+      echo "This multisite setup is currently unsupported. Use at your own risk!"
+      echo "--------------------------------------------------"
+      DISCOURSE_DB_PASSWORD=`date +%s | sha256sum | base64 | head -c 20`
+
+     sed -i -e "s/DISCOURSE_DB_PASSWORD: SOME_SECRET/DISCOURSE_DB_PASSWORD: $DISCOURSE_DB_PASSWORD/w $changelog" $web_file
+     if  [ -s $changelog ]
+     then
+	 rm $changelog
+     else
+       echo "Problem changing DISCOURSE_DB_PASSWORD" in $web_file
+     fi
+
+     cp -v $data_template $data_file
+     quote=\'
+     sed -i -e "s/password ${quote}SOME_SECRET${quote}/password '$DISCOURSE_DB_PASSWORD'/w $changelog" $data_file
+     if  [ -s $changelog ]
+     then
+	 rm $changelog
+     else
+       echo "Problem changing DISCOURSE_DB_PASSWORD" in $data_file
+     fi
+  fi
 fi
 
 scale_ram_and_cpu
@@ -621,5 +672,15 @@ validate_config
 ## if we reach this point without exiting, OK to proceed
 ## rebuild won't fail if there's nothing to rebuild and does the restart
 ##
+echo "Updates successful. Rebuilding in 5 seconds."
 sleep 5 # Just a chance to ^C in case they were too fast on the draw
-time ./launcher rebuild $app_name
+if [ "$data_name" == "$app_name" ]
+then
+    echo Building $app_name
+    ./launcher rebuild $app_name
+else
+    echo Building $data_name now . . .
+    ./launcher rebuild $data_name
+    echo Building $app_name now . . .
+    ./launcher rebuild $app_name
+fi

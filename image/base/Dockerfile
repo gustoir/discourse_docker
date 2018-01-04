@@ -6,7 +6,7 @@ ENV PG_MAJOR 9.5
 ENV RUBY_ALLOCATOR /usr/lib/libjemalloc.so.1
 ENV COMPRESS_BROTLI 1
 
-MAINTAINER Sam Saffron "https://twitter.com/samsaffron"
+#LABEL maintainer="Sam Saffron \"https://twitter.com/samsaffron\""
 
 RUN echo 2.0.`date +%Y%m%d` > /VERSION
 
@@ -53,7 +53,6 @@ RUN /tmp/install-nginx
 
 RUN apt-get -y install advancecomp jhead jpegoptim libjpeg-turbo-progs optipng
 
-
 RUN mkdir /jemalloc-stable && cd /jemalloc-stable &&\
       wget https://github.com/jemalloc/jemalloc/releases/download/3.6.0/jemalloc-3.6.0.tar.bz2 &&\
       tar -xjf jemalloc-3.6.0.tar.bz2 && cd jemalloc-3.6.0 && ./configure --prefix=/usr && make && make install &&\
@@ -72,15 +71,14 @@ RUN mkdir /lockless && cd /lockless && curl -O https://locklessinc.com/downloads
       tar zxf lockless_allocator_linux.tgz && mv lockless_allocator_linux/64bit/libllalloc.so.1.4 /usr/lib &&\
       cd / && rm -rf /lockless
 
-ADD rb_thread_fd_close.patch /tmp/rb_thread_fd_close.patch
 RUN echo 'gem: --no-document' >> /usr/local/etc/gemrc &&\
     mkdir /src && cd /src && git clone https://github.com/sstephenson/ruby-build.git &&\
     cd /src/ruby-build && ./install.sh &&\
-    cd / && rm -rf /src/ruby-build && (ruby-build 2.4.2 /usr/local --patch << /tmp/rb_thread_fd_close.patch)
+    cd / && rm -rf /src/ruby-build && (ruby-build 2.4.2 /usr/local)
 
 RUN gem update --system
 
-RUN gem install bundler &&\
+RUN gem install bundler --force &&\
     rm -rf /usr/local/share/ri/2.4.2/system &&\
     cd / && git clone https://github.com/SamSaffron/pups.git
 
@@ -98,12 +96,6 @@ RUN /tmp/install-gifsicle
 
 ADD install-pngquant /tmp/install-pngquant
 RUN /tmp/install-pngquant
-
-ADD phantomjs /usr/local/bin/phantomjs
-
-# Not using the official repo until they compile against a recent openssl
-# RUN cd tmp && wget https://bitbucket.org/ariya/phantomjs/downloads/phantomjs-2.1.1-linux-x86_64.tar.bz2
-# RUN cd tmp && tar jxf phantomjs-2.1.1-linux-x86_64.tar.bz2 && mv /tmp/phantomjs-2.1.1-linux-x86_64/bin/phantomjs /usr/local/bin
 
 # clean up for docker squash
 RUN   rm -fr /usr/share/man &&\

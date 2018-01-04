@@ -6,8 +6,8 @@ require 'optparse'
 images = {
   base: { name: 'base', tag: "discourse/base:build", squash: true },
   discourse_test_build: { name: 'discourse_test', tag: "discourse/discourse_test:build", squash: false},
+  discourse_test_public: { name: 'discourse_test', tag: "discourse/discourse_test:release", squash: true, extra_args: ' --build-arg tag=release '},
   discourse_dev: { name: 'discourse_dev', tag: "discourse/discourse_dev:build", squash: false },
-  discourse_test_public: { name: 'discourse_test', tag: "discourse/discourse_test:release", squash: true, extra_args: ' --build-arg tag=release '}
 }
 
 def run(command)
@@ -41,6 +41,5 @@ raise 'Image not found' unless images.include?(image)
 
 puts "Building #{images[image]}"
 dev_deps() if image == :discourse_dev
-run "(cd base && ./download_phantomjs)" if image == :base
 
 build(images[image])
